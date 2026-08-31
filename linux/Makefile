@@ -1,46 +1,66 @@
 # ==========================================
 #  Ozzy USB Audio Driver Makefile
 # ==========================================
+#
+# kbuild on modern Linux (>= 5.x) does not reliably allow source files
+# located outside the M= directory. The shared codec lives at
+# ../common/devices/ploytec/ -- before each build we copy it into
+# devices/, then build everything from inside this folder.
+# `make clean` removes the staged copies.
+#
 
-# Module Name
 MODULE_NAME := snd-usb-ozzy
 
-# Kernel Build Directory (defaults to current running kernel)
 KERNELDIR ?= /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)
+
+SHARED_SRC_DIR := $(PWD)/../common/devices/ploytec
+STAGED_FILES   := devices/ploytec_codec.c \
+                  devices/ploytec_codec.h \
+                  devices/ploytec_defs.h \
+                  devices/ploytec_protocol.h
 
 # ------------------------------------------
 #  Kbuild Definitions
 # ------------------------------------------
 
-# The target module
 obj-m := $(MODULE_NAME).o
 
-# Source files: Core + PCM + MIDI + Device families + Shared codecs
 $(MODULE_NAME)-y := ozzy_core.o \
                     ozzy_pcm.o \
                     ozzy_midi.o \
                     devices/ploytec.o \
-                    ../common/devices/ploytec/ploytec_codec.o
+                    devices/ploytec_codec.o
 
-# To add a new device family, append:
-#   devices/newdevice.o
-#   ../common/devices/newdevice/newdevice_codec.o  (if shared codec)
+# Make the staged headers visible at "../../common/devices/ploytec/<hdr>"
+# (the include path used by ploytec.c) by also exposing them via the
+# normal kbuild include directories.
+ccflags-y := -I$(src) -I$(src)/devices
 
 # ------------------------------------------
 #  Targets
 # ------------------------------------------
 
-all:
+all: stage
 	@echo "Building $(MODULE_NAME)..."
 	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules
 
+# Copy shared codec sources into devices/ so kbuild can build them as
+# regular in-tree objects. Safe to re-run -- always overwrites.
+stage:
+	@echo "Staging shared codec sources..."
+	@cp -f $(SHARED_SRC_DIR)/ploytec_codec.c    devices/ploytec_codec.c
+	@cp -f $(SHARED_SRC_DIR)/ploytec_codec.h    devices/ploytec_codec.h
+	@cp -f $(SHARED_SRC_DIR)/ploytec_defs.h     devices/ploytec_defs.h
+	@cp -f $(SHARED_SRC_DIR)/ploytec_protocol.h devices/ploytec_protocol.h
+
 clean:
 	@echo "Cleaning..."
-	$(MAKE) -C $(KERNELDIR) M=$(PWD) clean
+	-$(MAKE) -C $(KERNELDIR) M=$(PWD) clean
+	@rm -f $(STAGED_FILES)
 
-# Standard install (installs to /lib/modules/$(uname -r)/extra/)
 modules_install:
 	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules_install
+	depmod -a
 
-.PHONY: all clean modules_install
+.PHONY: all stage clean modules_install
